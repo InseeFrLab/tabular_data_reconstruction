@@ -1,0 +1,199 @@
+---
+title: "Défaire les masques de secret dans un tableau de comptages"
+subtitle: "Un exemple"
+author: Julien Jamme (Insee/DMS)
+date: last-modified
+format: 
+  html:
+    self-contained: true
+editor: source
+---
+
+## Objectif
+
+Un tableau protégé par des méthodes suppressives offre un certain niveau de protection.
+Ce niveau n'est pas absolu puisqu'il est possible de rechercher l'ensemble 
+des combinaisons de cases respectant les relations des cases entre elles, 
+en particulier grâce à leurs marges.
+
+Le niveau de protection sera jugé suffisant si cette reconstruction du tableau 
+original est suffisamment incertaine. 
+
+
+## Exemple
+
+Soit l'exemple suivant :
+
+|         |     A    |     B    |     C    |  **_T_** |
+|:-------:|:--------:|:--------:|:--------:|:--------:|
+|    I    |     4    |    15    |    10    | **_29_** |
+|    J    |    20    |    10    |    15    | **_45_** |
+| **_T_** | **_24_** | **_25_** | **_25_** | **_74_** |
+
+Ce tableau croise deux variables avec 3 et 2 modalités, respectivement. Les marges
+sont mentionnées en gras et en italique.
+
+Avec un seuil de confidentialité fixé à $5$, une seule case sera considérée comme 
+sensible et l'application d'une méthode suppressive conduira à diffuser le tableau 
+suivant:
+
+|         |     A    |     B    |     C    |  **_T_** |
+|:-------:|:--------:|:--------:|:--------:|:--------:|
+|    I    |          |    15    |          | **_29_** |
+|    J    |          |    10    |          | **_45_** |
+| **_T_** | **_24_** | **_25_** | **_25_** | **_74_** |
+
+
+
+### Première tentative
+
+En utilisant les relations marginales et en supposant que les cases nulles 
+ne sont jamais supprimées, on peut déduire du tableau protégé les intervalles 
+possibles suivants (les intervalles sont des intervalles d'entiers) :
+
+
+|         |     A    |     B    |     C    |  **_T_** |
+|:-------:|:--------:|:--------:|:--------:|:--------:|
+|    I    |   [1;13] |    15    |  [1;13]  | **_29_** |
+|    J    |  [11;23] |    10    |  [12;24] | **_45_** |
+| **_T_** | **_24_** | **_25_** | **_25_** | **_74_** |
+
+
+Avec le peu d'informations à notre disposition, nous ne pourrons pas faire mieux. 
+Ici, on ne peut déduire avec certitude laquelle (ou lesquelles) des cases est (sont)
+sensible(s).
+
+
+
+### Toutes les solutions possibles
+
+En revanche, on peut aller un peu plus loin, puisqu'en réalité toutes les combinaisons 
+des valeurs de chaque intervalle ne sont pas compatibles. Déterminons alors combien 
+il existe de solutions possibles à ce problème.
+
+
+Un programme très simple peut permettre de retrouver l'ensemble de ces solutions
+(voir la fonction  `find_solutions_bruteforce()`). 
+
+Appliquons ce programme à notre tableau:
+
+```{r}
+source("../R/solve_tabular_suppr_simple_way.R")
+row_totals <- c(29,45)
+col_totals <- c(24,25,25)
+tab <- matrix(c(NA, 15, NA,
+                NA,10,  NA),
+              nrow=2, byrow=TRUE)
+
+res <- find_solutions_bruteforce(tab, row_totals, col_totals)
+length(res$solutions)
+```
+
+
+Le programme trouve `r length(res$solutions)` solutions/combinaisons possibles 
+pour reconstruire le tableau, chacune ayant, en l'absence d'information supplémentaire, 
+la même probabilité d'être la bonne, soit une probabilité de `r round(1/length(res$solutions),3)`.
+
+
+### La probabilité qu'une case soit sensible
+
+On peut encore aller un peu plus loin. Parmi toutes les combinaisons possibles,
+déterminons la probabilité qu'une case donnée prenne une valeur confidentielle,
+c'est-à-dire comprise entre $1$ et $4$ dans notre cas. C'est ce que fait le 
+code suivant:
+
+```{r}
+probas <- posterior_prob_confidential(
+  res,
+  max_conf = 4
+)
+probas$proba_confidentielle <- round(probas$proba_confidentielle,3)
+probas
+```
+
+
+On peut remarquer que seulement deux cases ont une probabilité non nulle 
+d'être confidentielles. Chacune de ces deux cases, qui correspondent aux cases 
+supprimées sur la première ligne, prend une valeur sensible dans un `r probas[1,3]*100`% 
+des configurations possibles.
+
+
+Allons plus loin: on sait qu'une case au moins est sensible dans ce tableau, 
+seule explication à la présence de valeurs manquantes. Combien, parmi les solutions 
+possibles, en reste t-il où l'une des cases $(1;1)$ et $(1;3)$ est sensible ?
+
+```{r}
+library(purrr)
+res_with_at_least_one_sens <- res
+res_with_at_least_one_sens$solutions <- purrr::keep(
+  res$solutions,
+  \(mt){
+    (mt[1,1] >= 1 & mt[1,1] <= 4) | (mt[1,3] >= 1 & mt[1,3] <= 4)
+  }
+)
+length(res_with_at_least_one_sens$solutions)
+```
+
+Il n'en reste plus que `r length(res_with_at_least_one_sens$solutions)`. La probabilité 
+de retrouver la bonne solution est donc désormais de `r round(1/length(res_with_at_least_one_sens$solutions),3)`,
+soit une probabilité `r round(length(res$solutions)/length(res_with_at_least_one_sens$solutions),3)` fois 
+la probabilité de départ.
+
+Mettons à jour les probabilités de chaque case d'être sensible:
+
+```{r}
+probas2 <- posterior_prob_confidential(
+  res_with_at_least_one_sens,
+  max_conf = 4
+)
+probas2$proba_confidentielle <- round(probas2$proba_confidentielle,3)
+probas2
+```
+
+Les deux cases déjà désignées ont chacune une chance sur deux d'être sensible. 
+Une simple information auxiliaire à la disposition des utilisateurs peut dès lors 
+faire tomber la pièce du bon côté très facilement.
+
+
+### Et si on désigne les cases en secret primaire
+
+Pour faciliter la lecture des tableaux, il peut être tentant de préciser quelle 
+est la case (ou quelles sont les cases) sensible(s), soit, dans notre cas, le tableau 
+suivant:
+
+|         |     A    |     B    |     C    |  **_T_** |
+|:-------:|:--------:|:--------:|:--------:|:--------:|
+|    I    |     <5   |    15    |    >=5   | **_29_** |
+|    J    |    >=5   |    10    |    >=5   | **_45_** |
+| **_T_** | **_24_** | **_25_** | **_25_** | **_74_** |
+
+
+Cette pratique est déconseillée parce qu'elle réduit encore plus le nombre 
+de combinaisons possibles:
+
+
+```{r}
+res_with_info_sens <- keep(
+  res$solutions,
+  \(mt){
+    mt[1,1] >= 1 & mt[1,1] <= 4
+  }
+)
+length(res_with_info_sens)
+```
+
+Il ne reste plus que `r length(res_with_info_sens)` combinaisons possibles.
+La probabilité  de retrouver la bonne solution est donc désormais de 
+`r round(1/length(res_with_info_sens),3)`,
+soit `r round(length(res$solutions)/length(res_with_info_sens),3)` fois 
+la probabilité de départ et 
+`r round(length(res_with_at_least_one_sens$solutions)/length(res_with_info_sens),3)` fois 
+la probabilité obtenue à l'étape précédente.
+
+
+## Source:
+
+Le code est disponible sous [https://github.com/InseeFrLab/tabular_data_reconstruction](https://github.com/InseeFrLab/tabular_data_reconstruction)
+
+
+
