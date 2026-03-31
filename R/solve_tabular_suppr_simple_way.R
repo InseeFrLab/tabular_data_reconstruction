@@ -82,19 +82,34 @@ find_solutions_bruteforce <- function(tab, row_totals, col_totals) {
 #' res <- find_solutions_bruteforce(tab, row_totals, col_totals)
 #' post_res <- posterior_prob_confidential(
 #'   res,
-#'   max_conf = 4
+#'   max_conf = 10
 #' )
 posterior_prob_confidential <- function(all_solutions,
                                         min_conf=1, max_conf=10) {
   sols <- all_solutions$solutions
-  positions <- res$positions
-  nsol <- length(sols)
+  positions <- all_solutions$positions
   
-  if (nsol == 0) stop("Aucune solution valide !")
+  # Are excluded the solutions with no confidential case
+   is_sols_possible <- sols |> 
+    purrr::map(
+      \(sol){
+        is_confidential_possible <- vector(mode="logical", length=nrow(positions))
+        for(r in seq_len(nrow(positions))){
+          i <- positions[r,"row"]
+          j <- positions[r,"col"]
+          is_confidential_possible[r] <- sol[i,j] <= max_conf & sol[i,j] >= min_conf
+        }
+        sum(is_confidential_possible) > 0
+      } ) |> purrr::list_c()
+  sols_possible_with_confidential_cell <- sols[is_sols_possible]
+  
+  nsol <- length(sols_possible_with_confidential_cell)
+  
+  if (nsol == 0) stop("Aucune solution valide !") else cat("Nb de solutions avec une case confidentielle au moins: ", nsol)
   
   prob_conf <- rep(0, nrow(positions))
   
-  for (s in sols) {
+  for (s in sols_possible_with_confidential_cell) {
     vals <- s[positions]
     prob_conf <- prob_conf + as.numeric(vals >= min_conf & vals <= max_conf)
   }
